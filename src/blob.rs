@@ -17,8 +17,8 @@ use std::borrow::Cow;
 use crate::text::{prefer_ascii, typographic_symbols};
 use crate::url::{ResolvedUrl, extract_domain};
 
-/// Span type constants, a copy of the file syncdown's Gradle `generateSpanTypes` task writes
-/// from `library/span_types.toml`; kept in step with it by hand.
+/// Span type constants, generated at build time from `library/span_types.toml`
+/// by syncdown's Gradle `generateSpanTypes` task, beside comrak's.
 #[allow(missing_docs, dead_code)]
 mod span_types;
 

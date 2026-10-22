@@ -60,6 +60,33 @@ pub(crate) fn visit(html: &str, out: &mut BlobWriter) {
     w.end();
 }
 
+/// HTML's whitespace: what a run of it between words collapses from.
+fn is_space(c: char) -> bool {
+    c.is_ascii() && is_whitespace(c as u8)
+}
+
+/// A run of words with its whitespace one space each, as comrak's `collapse_whitespace` makes a
+/// text node's; borrowed when it already is, which one pass decides.
+fn collapse(s: &str) -> Cow<'_, str> {
+    let bytes = s.as_bytes();
+    let clean = !bytes
+        .iter()
+        .enumerate()
+        .any(|(i, &c)| is_whitespace(c) && (c != b' ' || bytes.get(i + 1) == Some(&b' ')));
+    if clean {
+        return Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        if !is_space(c) {
+            out.push(c);
+        } else if !out.ends_with(' ') {
+            out.push(' ');
+        }
+    }
+    Cow::Owned(out)
+}
+
 impl Walk<'_, '_> {
     /// Reads the tag opening at `at`, and answers where the words after it begin. A tag the input
     /// ends inside is no text, as HTML drops it.
@@ -199,29 +226,28 @@ impl Walk<'_, '_> {
             pre.push_str(text);
             return;
         }
-        let text: &str = &text;
-        for (n, word) in text.split(|c: char| c.is_ascii() && is_whitespace(c as u8)).enumerate() {
-            if n > 0 {
-                self.space = true;
-            }
-            if !word.is_empty() {
-                self.word(word);
-            }
-        }
-    }
-
-    fn word(&mut self, mut word: &str) {
+        let mut run: &str = &text;
         if self.block_start {
             // A paragraph opening on `>` is a quote, the marks no text
-            let marks = word.len() - word.trim_start_matches('>').len();
-            self.marks += marks;
-            word = &word[marks..];
-            if word.is_empty() {
-                return;
+            loop {
+                run = run.trim_start_matches(is_space);
+                let rest = run.trim_start_matches('>');
+                if rest.len() == run.len() {
+                    break;
+                }
+                self.marks += run.len() - rest.len();
+                run = rest;
             }
         }
-        self.begin();
-        self.out.write_prose(word);
+        let words = run.trim_matches(is_space);
+        if words.len() < run.len() && run.starts_with(is_space) {
+            self.space = true;
+        }
+        if !words.is_empty() {
+            self.begin();
+            self.out.write_prose(&collapse(words));
+            self.space = run.ends_with(is_space);
+        }
     }
 
     /// Before anything of a paragraph is written: opens its quote, or writes the space before it.

@@ -1,0 +1,27 @@
+Ha, I didn&#x27;t expect this to show up on HN!<p>Release is out now, including a blog post at <a href="https:&#x2F;&#x2F;www.mitmproxy.org&#x2F;posts&#x2F;releases&#x2F;mitmproxy-12.3&#x2F;" rel="nofollow">https:&#x2F;&#x2F;www.mitmproxy.org&#x2F;posts&#x2F;releases&#x2F;mitmproxy-12.3&#x2F;</a>. There isn&#x27;t really much to explain, you just pass `--emudhra`. :)
+=====
+I created a proxy using the 6 compromised eMudhra CA keys (2 of the 8 are code-signing and not for TLS). I initially tried just one (the one with d=4) like in the commit, but it did not seem to work for anything. Once I added all 6 keys, I was able to intercept some.<p>I was mainly interested in testing which IoT devices are affected and protecting them, not trying to sniff their traffic since it&#x27;s been a long day. My proxy thus just intercepted and forwarded the traffic upstream using a fresh TLS connection that does not use the compromised keys.
+=====
+The flaw is egregious enough that the root cert which signed them (emSign ECC Root CA – G3) is getting removed from trust stores. We know 8 ridiculously weak keys got made, but we don&#x27;t know that 0 slightly less weak but still unacceptable keys got made. What if they issued a CA key with 80 bits of entropy? That&#x27;s enough that brute force would take more time than it&#x27;s been since the disclosure, but not so long that they&#x27;d be considered at all secure (they should have 384 bits of entropy). So everything that root signed is untrustworthy, possibly everything the CA has signed. The G3 root is from 2018 IIRC, so lots of potentially exposed devices.
+=====
+This looks like it&#x27;s using the emSign root path, which is useful, but the AAA root path is equally useful in different cases. The AAA root path was disabled for https on root stores newer than February 2025, but has been in root stores since forever. Meanwhile the emSign root path was only included in root stores since ~2018 and got removed in October 2026.<p>So from the perspective of hacking old IoT devices, if your device hasn&#x27;t been updated since 2018, the AAA path should work; if since February 2025, either path works; if since October 2026, the emSign path.
+=====
+I didn&#x27;t expect this commit to end up on HN, otherwise I would have done the full integration in one go. :) <a href="https:&#x2F;&#x2F;github.com&#x2F;mitmproxy&#x2F;mitmproxy&#x2F;pull&#x2F;8503" rel="nofollow">https:&#x2F;&#x2F;github.com&#x2F;mitmproxy&#x2F;mitmproxy&#x2F;pull&#x2F;8503</a> adds the AAA root path.
+=====
+<a href="https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;EMudhra#2026_intermediate_certificate_compromise" rel="nofollow">https:&#x2F;&#x2F;en.wikipedia.org&#x2F;wiki&#x2F;EMudhra#2026_intermediate_cert...</a><p>&gt; On October 17, 2026, browser root programs received a report that the private keys of eight eMudhra intermediate certificates had been compromised. The private keys were 4, 56, 66, 115, 155, 156, 230, and 237. A P-384 elliptic-curve private key normally has about 384 bits of entropy, but these keys had between 3 and 8 bits.
+=====
+FWIW i <i>havent</i> updated my ios, I&#x27;m on 26.6.2, and they all got revoked for me. The revocation shouldn&#x27;t require an iOS update.
+=====
+It&#x27;s a weird move for this post to simultaneously line this vulnerability up against Log4Shell (very few serversides are going to measure up to L4S) <i>and</i> insinuate that it&#x27;s not practically exploitable at all.<p>If it was just &quot;everyone take a breath, we&#x27;ve been through something worse with Log4Shell&quot;, that would make a lot more sense.
+=====
+This is so fucked up. I was reviewing my account and I just saw this in the logs... Claude says database credentials and bucket credentials go in via env vars so likely they had access to database and bucket contents.<p><pre><code>  Audit Logs
+  Oct 21, 2026 05:54:13 PM CDT
+  BucketInstanceCredential.regenerated in my-project production by Railway Staff
+  Oct 21, 2026 05:54:13 PM CDT
+  BucketInstanceCredential.regenerated in my-project production by Railway Staff
+  Oct 21, 2026 05:54:13 PM CDT
+  BucketInstanceCredential.regenerated in my-project production by Railway Staff</code></pre>
+=====
+<p><pre><code>  &gt; We even stood up a replication feed of their own control-plane database using credentials committed in their own repositories — GCP service-account keys and an Azure service principal — and let their infrastructure deliver it to us. Every six hours, for the last twenty-two days of the campaign, from 8 September to 30 September, that pipeline faithfully re-exported every table of the operational heart of TiDB Cloud — tenants, users, API keys, cluster credentials, changefeeds, migrations — and pushed it out. Eighty-eight consecutive exports, not one detection event.
+</code></pre>
+I can’t even

@@ -3,23 +3,26 @@
 //! for, so a comment reads the same from either.
 
 use super::*;
-use crate::entities::{decode_html_attribute_entities, decode_html_entities};
+use crate::entities::{decode_html_attribute_entities, decode_html_entities_into};
 use crate::image_url::is_image_url;
 use crate::scan::{is_whitespace, process_comment_or_doctype, scan_tag};
 use crate::url::resolve_url;
 
 /// A tag open around words still to come.
-enum Open {
+enum Open<'a> {
     /// Bold or italic: the span it closes with and the tag that closes it.
     Style(i32, &'static str, usize),
-    /// A link: where its span and its words' bytes start, and its address as written.
-    Link(usize, usize, String),
+    /// A link: where its span and its words' bytes start, and its address, borrowed from the
+    /// input unless an entity was decoded in it.
+    Link(usize, usize, Cow<'a, str>),
 }
 
 struct Walk<'a, 'o> {
     html: &'a str,
     out: &'o mut BlobWriter,
-    open: Vec<Open>,
+    open: Vec<Open<'a>>,
+    /// The words between two tags with their entities decoded, one buffer for the whole walk.
+    decoded: String,
     /// Nothing of the current paragraph is written yet.
     block_start: bool,
     /// The `>` marks read at the paragraph's start, before its first word.
@@ -37,6 +40,7 @@ pub(crate) fn visit(html: &str, out: &mut BlobWriter) {
         html,
         out,
         open: Vec::new(),
+        decoded: String::new(),
         block_start: true,
         marks: 0,
         quote: None,
@@ -87,7 +91,7 @@ fn collapse(s: &str) -> Cow<'_, str> {
     Cow::Owned(out)
 }
 
-impl Walk<'_, '_> {
+impl<'a> Walk<'a, '_> {
     /// Reads the tag opening at `at`, and answers where the words after it begin. A tag the input
     /// ends inside is no text, as HTML drops it.
     fn tag(&mut self, at: usize) -> usize {
@@ -119,7 +123,7 @@ impl Walk<'_, '_> {
     }
 
     /// Opens a tag, answering where the words after it begin: past the link for a picture.
-    fn start(&mut self, name: &str, href: Option<&str>, after: usize) -> usize {
+    fn start(&mut self, name: &str, href: Option<&'a str>, after: usize) -> usize {
         let is = |tag: &str| name.eq_ignore_ascii_case(tag);
         if let Some(pre) = &mut self.pre {
             if is("br") {
@@ -149,7 +153,7 @@ impl Walk<'_, '_> {
             && !self.open.iter().any(|o| matches!(o, Open::Link(..)))
         {
             self.begin();
-            let href = decode_html_attribute_entities(href).into_owned();
+            let href = decode_html_attribute_entities(href);
             if let Some(past) = self.picture(&href, after) {
                 return past;
             }
@@ -167,9 +171,13 @@ impl Walk<'_, '_> {
         if !close.eq_ignore_ascii_case(b"</a") {
             return None;
         }
-        let words = decode_html_entities(&self.html[after..lt]);
+        let raw = &self.html[after..lt];
+        let words = if decode_html_entities_into(raw, false, false, &mut self.decoded) { &self.decoded } else { raw };
+        if !(words.starts_with("http://") || words.starts_with("https://")) {
+            return None;
+        }
         let url = resolve_url(href);
-        if !(words.starts_with("http://") || words.starts_with("https://")) || !is_image_url(&url) {
+        if !is_image_url(&url) {
             return None;
         }
         let gt = lt + memchr::memchr(b'>', &bytes[lt..])?;
@@ -202,7 +210,7 @@ impl Walk<'_, '_> {
         }
     }
 
-    fn end_open(&mut self, open: Open) {
+    fn end_open(&mut self, open: Open<'a>) {
         match open {
             Open::Style(span, _, start) => self.out.span(span, start),
             Open::Link(start, text_start, href) => {
@@ -219,7 +227,21 @@ impl Walk<'_, '_> {
         if raw.is_empty() {
             return;
         }
-        let text = decode_html_entities(raw);
+        if memchr::memchr(b'&', raw.as_bytes()).is_none() {
+            return self.words(raw);
+        }
+        // Taken out while the words are written, so they can borrow it
+        let mut decoded = std::mem::take(&mut self.decoded);
+        if decode_html_entities_into(raw, false, false, &mut decoded) {
+            self.words(&decoded);
+        } else {
+            self.words(raw);
+        }
+        self.decoded = decoded;
+    }
+
+    /// Words with their entities decoded, written with their whitespace one space.
+    fn words(&mut self, text: &str) {
         if let Some(pre) = &mut self.pre {
             // HTML drops the newline straight after `<pre>`
             let text = if pre.is_empty() { text.strip_prefix('\n').unwrap_or(&text) } else { &text };

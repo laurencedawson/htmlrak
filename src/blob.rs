@@ -1,23 +1,29 @@
-//! Binary blob writer for syncdown's FastSpannable.
+//! Binary blob renderer for syncdown's FastSpannable.
 //!
-//! From comrak's `blob.rs` in syncdown (BSD-2-Clause, see `licenses/comrak.txt`): the writer
-//! only, its comrak walk, tables and footnotes left behind.
+//! From comrak's `blob.rs` in syncdown (BSD-2-Clause, see `licenses/comrak.txt`). The writer is
+//! comrak's as written; tables, which need comrak's tree, are left behind, and the walk over
+//! comrak's tree is replaced by one over HTML in [`walk`].
 //!
 //! Produces a compact blob: `[text_len:4][span_count:3|flags:1][text][pad][spans][url_data]`
 //! All positions are UTF-16 code units mapping directly to Java String indices.
 //! Flag byte (byte 7): bit 0 = is_ascii, bit 1 = has_spoiler_body,
 //! bits 2-7 reserved.
 //!
+//! Unlike HTML rendering, this walks the input once and writes text + span metadata
+//! into a single contiguous buffer with zero intermediate allocations.
 
 use std::borrow::Cow;
 
-use crate::url::{ResolvedUrl, extract_domain};
 use crate::text::{prefer_ascii, typographic_symbols};
+use crate::url::{ResolvedUrl, extract_domain};
 
-/// Span type constants, a copy of the file syncdown's Gradle `generateSpanTypes` task writes from
-/// `library/span_types.toml`; kept in step with it by hand.
+/// Span type constants, a copy of the file syncdown's Gradle `generateSpanTypes` task writes
+/// from `library/span_types.toml`; kept in step with it by hand.
 #[allow(missing_docs, dead_code)]
 mod span_types;
+
+/// The walk over a site's HTML, in place of comrak's over its tree.
+mod walk;
 
 // Re-export at `crate::blob::*` so sibling modules (and `crate::tests::blob`)
 // can reference span type ids without reaching into `span_types` directly.
@@ -41,10 +47,38 @@ fn utf16_len(s: &str) -> usize {
     len
 }
 
+/// Render a site's HTML into a binary blob.
+///
+/// Returns `None` if the document has no spans and text is unchanged from input
+/// (caller should use the raw input string directly).
+pub fn render_blob(input: &str) -> Option<Vec<u8>> {
+    // ASCII input is only a hint, as in comrak: a decoded entity or a typographic symbol can
+    // write non-ASCII, so one scan of the output catches that and the rare violating document is
+    // re-rendered with the scanning writer, every span offset redone.
+    let mut b = if input.is_ascii() {
+        BlobWriter::new_ascii(input.len())
+    } else {
+        BlobWriter::new(input.len())
+    };
+    walk::visit(input, &mut b);
+    b.append_footnotes();
+    if b.fast_path_ascii && !b.text().is_ascii() {
+        b = BlobWriter::new(input.len());
+        walk::visit(input, &mut b);
+        b.append_footnotes();
+    }
+    if b.spans.is_empty() && b.text() == input {
+        None
+    } else {
+        Some(b.into_blob())
+    }
+}
+
 pub(crate) struct BlobWriter {
     blob: Vec<u8>,
     pub(crate) spans: Vec<i32>,
     pub(crate) url_data: Vec<u8>,
+    footnotes: Vec<String>,
     len: usize,
     p: usize,
     /// Set if every byte written to the text section is ASCII (< 0x80).
@@ -60,8 +94,8 @@ pub(crate) struct BlobWriter {
     /// consumers can skip hidden-spoiler containment checks for normal content.
     has_spoiler_body: bool,
     /// How many lists and quotes the walk is inside.
-    pub(crate) list_depth: usize,
-    pub(crate) quote_depth: usize,
+    list_depth: usize,
+    quote_depth: usize,
 }
 
 impl BlobWriter {
@@ -99,6 +133,7 @@ impl BlobWriter {
             blob,
             spans: Vec::with_capacity(spans_cap),
             url_data: Vec::with_capacity(url_cap),
+            footnotes: vec![],
             len: 0,
             p: 0,
             all_ascii: true,
@@ -147,7 +182,7 @@ impl BlobWriter {
     /// — so with a dirty prefix the flag stays set and the final scan in
     /// `render_blob` re-renders with exact accounting, as it did before
     /// symbols moved here.
-    pub(crate) fn write_prose(&mut self, s: &str) {
+    fn write_prose(&mut self, s: &str) {
         // One gate for both character passes: prefer_ascii only acts on
         // 0xE2-lead sequences, typographic_symbols only on '(' or '+'.
         // The common clean node takes a single scan and writes as-is.
@@ -177,11 +212,6 @@ impl BlobWriter {
     #[cfg(test)]
     pub(crate) fn clear_pending(&mut self) {
         self.p = 0;
-    }
-
-    /// Bytes written so far, the header's included: where a link's words begin, for its domain suffix.
-    pub(crate) fn bytes(&self) -> usize {
-        self.blob.len()
     }
 
     /// Rendered text bytes so far (excluding header). Used during render and by tests.
@@ -222,7 +252,7 @@ impl BlobWriter {
         ]);
     }
 
-    pub(crate) fn emit_image(&mut self, url: &ResolvedUrl) {
+    fn emit_image(&mut self, url: &ResolvedUrl) {
         if self.len != 0 {
             // Separate the image from prior content by at least two newlines;
             // existing trailing `\n` (past any trailing spaces/tabs) count.
@@ -240,7 +270,7 @@ impl BlobWriter {
         self.nl(2);
     }
 
-    pub(crate) fn append_domain_suffix(&mut self, text_start: usize, url: &str) {
+    fn append_domain_suffix(&mut self, text_start: usize, url: &str) {
         let Some(domain) = extract_domain(url) else {
             return;
         };
@@ -254,6 +284,27 @@ impl BlobWriter {
         self.write_text(" (");
         self.write_text(&domain);
         self.write_text(")");
+    }
+
+    pub(crate) fn append_footnotes(&mut self) {
+        let notes = std::mem::take(&mut self.footnotes);
+        if notes.is_empty() {
+            return;
+        }
+        self.nl(2);
+        let start = self.pos();
+        self.write_text("\u{0001}");
+        self.span(HRULE, start);
+        self.nl(2);
+        for (i, note) in notes.iter().enumerate() {
+            let start = self.pos();
+            self.write_text(&(i + 1).to_string());
+            self.span(SUPERSCRIPT, start);
+            self.span(SUPERSCRIPT_SIZE, start);
+            self.write_text(" ");
+            self.write_text(note);
+            self.nl(1);
+        }
     }
 
     pub(crate) fn into_blob(mut self) -> Vec<u8> {

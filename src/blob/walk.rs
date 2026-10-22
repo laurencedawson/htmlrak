@@ -2,7 +2,7 @@
 //! markdown between. Each tag is written as comrak's blob writer writes the markdown it stands
 //! for, so a comment reads the same from either.
 
-use crate::blob::{BOLD, BlobWriter, CODE_BLOCK, ITALIC, LINK, LINK_SIZE, QUOTE};
+use super::*;
 use crate::entities::{decode_html_attribute_entities, decode_html_entities};
 use crate::image_url::is_image_url;
 use crate::scan::{is_whitespace, process_comment_or_doctype, scan_tag};
@@ -16,9 +16,9 @@ enum Open {
     Link(usize, usize, String),
 }
 
-struct Walk<'a> {
+struct Walk<'a, 'o> {
     html: &'a str,
-    out: BlobWriter,
+    out: &'o mut BlobWriter,
     open: Vec<Open>,
     /// Nothing of the current paragraph is written yet.
     block_start: bool,
@@ -32,10 +32,10 @@ struct Walk<'a> {
     pre: Option<String>,
 }
 
-pub(crate) fn walk(html: &str) -> BlobWriter {
+pub(crate) fn visit(html: &str, out: &mut BlobWriter) {
     let mut w = Walk {
         html,
-        out: BlobWriter::new(html.len()),
+        out,
         open: Vec::new(),
         block_start: true,
         marks: 0,
@@ -57,10 +57,10 @@ pub(crate) fn walk(html: &str) -> BlobWriter {
         from = i;
     }
     w.text(&html[i..]);
-    w.end()
+    w.end();
 }
 
-impl Walk<'_> {
+impl Walk<'_, '_> {
     /// Reads the tag opening at `at`, and answers where the words after it begin. A tag the input
     /// ends inside is no text, as HTML drops it.
     fn tag(&mut self, at: usize) -> usize {
@@ -126,7 +126,7 @@ impl Walk<'_> {
             if let Some(past) = self.picture(&href, after) {
                 return past;
             }
-            self.open.push(Open::Link(self.out.pos(), self.out.bytes(), href));
+            self.open.push(Open::Link(self.out.pos(), self.out.blob.len(), href));
         }
         after
     }
@@ -267,7 +267,7 @@ impl Walk<'_> {
     }
 
     /// Closes whatever the input left open, as HTML does at its end.
-    fn end(mut self) -> BlobWriter {
+    fn end(mut self) {
         if self.pre.is_some() {
             self.end_pre();
         }
@@ -275,6 +275,5 @@ impl Walk<'_> {
             self.end_open(open);
         }
         self.end_block();
-        self.out
     }
 }

@@ -7,7 +7,6 @@ mod image_url;
 mod scan;
 mod text;
 mod url;
-mod walk;
 
 /// Reads `html` into a blob: `[text_len:4][span_count:3|flags:1][text][pad][spans][url_data]`,
 /// positions in UTF-16 units, as comrak's blob for the same content.
@@ -18,12 +17,7 @@ pub fn parse(html: &str) -> Option<Vec<u8>> {
     if !html.bytes().any(|b| matches!(b, b'<' | b'&' | b'\n')) {
         return None;
     }
-    let out = walk::walk(html);
-    if out.spans.is_empty() && out.text() == html {
-        None
-    } else {
-        Some(out.into_blob())
-    }
+    blob::render_blob(html)
 }
 
 #[cfg(test)]

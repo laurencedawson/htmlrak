@@ -1,0 +1,8 @@
+[package]
+name = "htmlrak"
+version = "0.1.0"
+edition = "2024"
+description = "A site's comment HTML straight into syncdown's span blob"
+
+[dependencies]
+memchr = "2"

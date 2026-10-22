@@ -106,11 +106,10 @@ pub(crate) fn process_comment_or_doctype(html_chunk: &str, position: usize) -> C
 pub(crate) struct TagScan {
   pub(crate) complete: bool,
   pub(crate) new_position: usize,
-  pub(crate) self_closing: bool,
 }
 
-/// Where the scan sits within one `name="value"` triple. `Quoted` owns its
-/// delimiter, so saving the state always saves the open quote with it.
+/// Where the scan sits within one `name="value"` triple. A quoted value is run to its delimiter
+/// whole, so it needs no state of its own.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
   Gap,
@@ -118,7 +117,6 @@ enum State {
   AfterName,
   BeforeValue,
   UnquotedValue,
-  Quoted(u8),
 }
 
 /// Walk a start tag's attributes from `position` to its `>`, handing each one `wanted` names to
@@ -152,7 +150,6 @@ pub(crate) fn scan_tag<'a>(
       return TagScan {
         complete: true,
         new_position: i + 2,
-        self_closing: true,
       };
     }
     if c == GT_CHAR {
@@ -160,7 +157,6 @@ pub(crate) fn scan_tag<'a>(
       return TagScan {
         complete: true,
         new_position: i + 1,
-        self_closing: false,
       };
     }
 
@@ -216,7 +212,6 @@ pub(crate) fn scan_tag<'a>(
           state = State::Gap;
         }
       }
-      State::Quoted(_) => {}
     }
     i += 1;
   }
@@ -224,7 +219,6 @@ pub(crate) fn scan_tag<'a>(
   TagScan {
     complete: false,
     new_position: bytes.len(),
-    self_closing: false,
   }
 }
 
@@ -242,7 +236,7 @@ fn finish<'a>(
   match state {
     State::Name => push(&html[name_start..end], ""),
     State::AfterName | State::BeforeValue => push(&html[name_start..name_end], ""),
-    State::UnquotedValue | State::Quoted(_) => push(&html[name_start..name_end], &html[value_start..end]),
+    State::UnquotedValue => push(&html[name_start..name_end], &html[value_start..end]),
     State::Gap => {}
   }
 }

@@ -16,7 +16,7 @@ use crate::text::{prefer_ascii, typographic_symbols};
 
 /// Span type constants, a copy of the file syncdown's Gradle `generateSpanTypes` task writes from
 /// `library/span_types.toml`; kept in step with it by hand.
-#[allow(missing_docs)]
+#[allow(missing_docs, dead_code)]
 mod span_types;
 
 // Re-export at `crate::blob::*` so sibling modules (and `crate::tests::blob`)
@@ -60,8 +60,8 @@ pub(crate) struct BlobWriter {
     /// consumers can skip hidden-spoiler containment checks for normal content.
     has_spoiler_body: bool,
     /// How many lists and quotes the walk is inside.
-    list_depth: usize,
-    quote_depth: usize,
+    pub(crate) list_depth: usize,
+    pub(crate) quote_depth: usize,
 }
 
 impl BlobWriter {
@@ -147,7 +147,7 @@ impl BlobWriter {
     /// — so with a dirty prefix the flag stays set and the final scan in
     /// `render_blob` re-renders with exact accounting, as it did before
     /// symbols moved here.
-    fn write_prose(&mut self, s: &str) {
+    pub(crate) fn write_prose(&mut self, s: &str) {
         // One gate for both character passes: prefer_ascii only acts on
         // 0xE2-lead sequences, typographic_symbols only on '(' or '+'.
         // The common clean node takes a single scan and writes as-is.
@@ -177,6 +177,11 @@ impl BlobWriter {
     #[cfg(test)]
     pub(crate) fn clear_pending(&mut self) {
         self.p = 0;
+    }
+
+    /// Bytes written so far, the header's included: where a link's words begin, for its domain suffix.
+    pub(crate) fn bytes(&self) -> usize {
+        self.blob.len()
     }
 
     /// Rendered text bytes so far (excluding header). Used during render and by tests.
@@ -217,7 +222,7 @@ impl BlobWriter {
         ]);
     }
 
-    fn emit_image(&mut self, url: &ResolvedUrl) {
+    pub(crate) fn emit_image(&mut self, url: &ResolvedUrl) {
         if self.len != 0 {
             // Separate the image from prior content by at least two newlines;
             // existing trailing `\n` (past any trailing spaces/tabs) count.
@@ -235,7 +240,7 @@ impl BlobWriter {
         self.nl(2);
     }
 
-    fn append_domain_suffix(&mut self, text_start: usize, url: &str) {
+    pub(crate) fn append_domain_suffix(&mut self, text_start: usize, url: &str) {
         let Some(domain) = extract_domain(url) else {
             return;
         };

@@ -254,6 +254,31 @@ fn quote_two_marks_nest() {
     );
 }
 
+/// Marks with a space between them nest as two marks together do.
+#[test]
+fn quote_spaced_marks_nest() {
+    assert_eq!(
+        spanned("&gt; &gt; nested"),
+        ("nested".to_string(), vec![quote(0, 6, 1), quote(0, 6, 0)])
+    );
+}
+
+/// Space before the mark is HTML's, collapsed and meaning nothing, so the paragraph is still a
+/// quote however much of it there is.
+#[test]
+fn quote_space_before_the_mark() {
+    assert_eq!(spanned("    &gt; x"), ("x".to_string(), vec![quote(0, 1, 0)]));
+}
+
+/// A mark opening a code block's line is code, never a quote.
+#[test]
+fn quote_mark_in_code_is_code() {
+    assert_eq!(
+        spanned("<pre><code>  &gt; quoted</code></pre>"),
+        ("  > quoted".to_string(), vec![span(0, 10, CODE_BLOCK)])
+    );
+}
+
 /// A mark inside a paragraph is a word.
 #[test]
 fn quote_mark_mid_paragraph_is_a_word() {

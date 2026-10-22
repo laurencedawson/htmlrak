@@ -10,6 +10,7 @@ use generated::{
   lookup_named_entity,
 };
 
+#[cfg(test)]
 #[inline]
 pub(crate) fn decode_html_entities(text: &str) -> Cow<'_, str> {
   decode_html_entities_in_context(text, false, false)

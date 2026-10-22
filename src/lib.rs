@@ -16,3 +16,6 @@ pub fn parse(html: &str) -> Option<Vec<u8>> {
     let _ = html;
     None
 }
+
+#[cfg(test)]
+mod tests;
